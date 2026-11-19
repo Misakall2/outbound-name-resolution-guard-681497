@@ -138,6 +138,26 @@ response = client.get(
 
 This extension is how the `httpx` timeouts are implemented, ensuring that the timeout values are associated with the request instance and passed throughout the stack. You shouldn't typically be working with this extension directly, but use the higher level `timeout` API instead.
 
+### `"origin_restriction"`
+
+A per-request list of allowed origins, applied to the initial request and to
+any redirect the client would follow. See
+[Restricting redirects to allowed origins](clients.md#restricting-redirects-to-allowed-origins).
+
+The value must be an `httpx.OriginRestriction` instance. It travels with the
+request, including across redirects, and is read back on each request so that
+the client keeps no restriction state of its own.
+
+```python
+restriction = httpx.OriginRestriction(["https://www.example.com"])
+response = httpx.get(
+    "https://www.example.com",
+    follow_redirects=True,
+    extensions={"origin_restriction": restriction},
+)
+response.extensions["origin_decisions"]
+```
+
 ### `"target"`
 
 The target that is used as [the HTTP target instead of the URL path](https://datatracker.ietf.org/doc/html/rfc2616#section-5.1.2).
@@ -180,6 +200,16 @@ response = httpx.request("CONNECT", "https://www.example.com", extensions=extens
 ```
 
 ## Response Extensions
+
+### `"origin_decisions"`
+
+The `httpx.OriginDecision` records taken while handling the request, as a tuple.
+Only present when the request carried an `"origin_restriction"` extension.
+
+Each record holds the entry origin, the origin the client resolved as the next
+target, and whether that target was allowed. Records contain only scheme, host
+and port: paths, query strings, fragments and any credentials in the URL are
+never included.
 
 ### `"http_version"`
 

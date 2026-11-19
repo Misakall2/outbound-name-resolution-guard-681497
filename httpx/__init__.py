@@ -6,6 +6,7 @@ from ._config import *
 from ._content import *
 from ._exceptions import *
 from ._models import *
+from ._origins import *
 from ._status_codes import *
 from ._transports import *
 from ._types import *
@@ -65,6 +66,10 @@ __all__ = [
     "NetRCAuth",
     "NetworkError",
     "options",
+    "Origin",
+    "OriginDecision",
+    "OriginNotAllowed",
+    "OriginRestriction",
     "patch",
     "PoolTimeout",
     "post",

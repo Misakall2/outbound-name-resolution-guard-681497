@@ -22,11 +22,18 @@ from ._config import (
 from ._decoders import SUPPORTED_DECODERS
 from ._exceptions import (
     InvalidURL,
+    OriginNotAllowed,
     RemoteProtocolError,
     TooManyRedirects,
     request_context,
 )
 from ._models import Cookies, Headers, Request, Response
+from ._origins import (
+    ORIGIN_DECISIONS_EXTENSION,
+    ORIGIN_RESTRICTION_EXTENSION,
+    OriginDecision,
+    OriginRestriction,
+)
 from ._status_codes import codes
 from ._transports.base import AsyncBaseTransport, BaseTransport
 from ._transports.default import AsyncHTTPTransport, HTTPTransport
@@ -590,6 +597,58 @@ class BaseClient:
             )
             request.extensions = dict(**request.extensions, timeout=timeout.as_dict())
 
+    def _get_origin_restriction(self, request: Request) -> OriginRestriction | None:
+        """
+        Return the origin restriction attached to this request, if any.
+
+        The restriction is read from the request itself rather than stored on
+        the client, so each request is judged only by the restriction supplied
+        with it.
+        """
+        restriction = request.extensions.get(ORIGIN_RESTRICTION_EXTENSION)
+        if restriction is None:
+            return None
+        if not isinstance(restriction, OriginRestriction):
+            raise TypeError(
+                f'The "{ORIGIN_RESTRICTION_EXTENSION}" request extension must be '
+                "an httpx.OriginRestriction instance."
+            )
+        return restriction
+
+    def _check_origin(
+        self,
+        restriction: OriginRestriction,
+        request: Request,
+        entry_url: URL,
+        target_url: URL,
+        decisions: list[OriginDecision],
+    ) -> OriginDecision:
+        """
+        Record the decision for `target_url`, raising if it is not allowed.
+
+        This is called before the request is handed to the transport, so a
+        rejected destination never reaches the transport layer.
+        """
+        decision = restriction.decide(entry_url, target_url)
+        decisions.append(decision)
+        if not decision.allowed:
+            raise OriginNotAllowed(
+                f"Origin not allowed: {decision.target_origin}.",
+                request=request,
+                origin=decision.target_origin,
+                decisions=tuple(decisions),
+            )
+        return decision
+
+    def _record_origin_decisions(
+        self, response: Response, decisions: list[OriginDecision]
+    ) -> None:
+        """
+        Expose the decisions taken so far on the response extensions.
+        """
+        if decisions:
+            response.extensions[ORIGIN_DECISIONS_EXTENSION] = tuple(decisions)
+
 
 class Client(BaseClient):
     """
@@ -967,6 +1026,15 @@ class Client(BaseClient):
         follow_redirects: bool,
         history: list[Response],
     ) -> Response:
+        restriction = self._get_origin_restriction(request)
+        decisions: list[OriginDecision] = []
+        if restriction is not None:
+            # The initial request is subject to the same check as any later
+            # hop, and is rejected before it reaches the transport.
+            self._check_origin(
+                restriction, request, request.url, request.url, decisions
+            )
+
         while True:
             if len(history) > self.max_redirects:
                 raise TooManyRedirects(
@@ -981,12 +1049,24 @@ class Client(BaseClient):
                 for hook in self._event_hooks["response"]:
                     hook(response)
                 response.history = list(history)
+                self._record_origin_decisions(response, decisions)
 
                 if not response.has_redirect_location:
                     return response
 
+                entry_url = request.url
                 request = self._build_redirect_request(request, response)
                 history = history + [response]
+
+                if restriction is not None:
+                    # The destination was resolved by the same code path that
+                    # builds the next request, so a relative 'Location' header
+                    # is interpreted against the current request. Checking here
+                    # keeps a rejected hop away from the transport.
+                    self._check_origin(
+                        restriction, request, entry_url, request.url, decisions
+                    )
+                    self._record_origin_decisions(response, decisions)
 
                 if follow_redirects:
                     response.read()
@@ -1682,6 +1762,13 @@ class AsyncClient(BaseClient):
         follow_redirects: bool,
         history: list[Response],
     ) -> Response:
+        restriction = self._get_origin_restriction(request)
+        decisions: list[OriginDecision] = []
+        if restriction is not None:
+            self._check_origin(
+                restriction, request, request.url, request.url, decisions
+            )
+
         while True:
             if len(history) > self.max_redirects:
                 raise TooManyRedirects(
@@ -1697,12 +1784,20 @@ class AsyncClient(BaseClient):
                     await hook(response)
 
                 response.history = list(history)
+                self._record_origin_decisions(response, decisions)
 
                 if not response.has_redirect_location:
                     return response
 
+                entry_url = request.url
                 request = self._build_redirect_request(request, response)
                 history = history + [response]
+
+                if restriction is not None:
+                    self._check_origin(
+                        restriction, request, entry_url, request.url, decisions
+                    )
+                    self._record_origin_decisions(response, decisions)
 
                 if follow_redirects:
                     await response.aread()

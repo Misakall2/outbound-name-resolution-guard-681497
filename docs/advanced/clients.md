@@ -176,6 +176,55 @@ with httpx.Client(headers=headers) as client:
     ...
 ```
 
+## Restricting redirects to allowed origins
+
+When following redirects, an application may want to bound which origins a
+request is allowed to reach. An `httpx.OriginRestriction` is supplied per
+request, using the `"origin_restriction"` request extension:
+
+```python
+restriction = httpx.OriginRestriction(
+    ["https://api.example.com", "https://cdn.example.com"]
+)
+
+with httpx.Client() as client:
+    response = client.get(
+        "https://api.example.com/start",
+        follow_redirects=True,
+        extensions={"origin_restriction": restriction},
+    )
+```
+
+The restriction applies to the initial request and to the redirect the client
+would follow. A relative `Location` header is resolved against the current
+request, exactly as it is when building the next request, and origins are
+compared on scheme, host and effective port only, so `https://example.com` and
+`https://example.com:443` are the same origin.
+
+If a destination is not allowed, an `httpx.OriginNotAllowed` is raised while
+the next request is being prepared: the rejected request is never handed to the
+transport.
+
+```python
+try:
+    client.get(..., extensions={"origin_restriction": restriction})
+except httpx.OriginNotAllowed as exc:
+    print(exc.origin)      # Origin(scheme='https', host='other.example', port=443)
+    print(exc.decisions)   # The OriginDecision records taken so far
+```
+
+Each request is judged only by the restriction supplied with it. A client used
+for several requests keeps no restriction state, resolution cache or prior
+decision between them. Requests without an `"origin_restriction"` extension
+follow redirects and raise errors exactly as before.
+
+The decisions taken while handling a request are also available as a tuple of
+`httpx.OriginDecision` records on the response, under the `"origin_decisions"`
+extension. A record holds the entry origin, the target origin the client
+resolved, and whether it was allowed. Diagnostics deliberately keep only scheme,
+host and port: paths, query strings, fragments and request credentials are never
+included, so troubleshooting output cannot leak them.
+
 ## Monitoring download progress
 
 If you need to monitor download progress of large responses, you can use response streaming and inspect the `response.num_bytes_downloaded` property.

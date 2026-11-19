@@ -21,6 +21,7 @@ Our exception hierarchy:
       - UnsupportedProtocol
     + DecodingError
     + TooManyRedirects
+    + OriginNotAllowed
   x HTTPStatusError
 * InvalidURL
 * CookieConflict
@@ -38,6 +39,7 @@ import typing
 
 if typing.TYPE_CHECKING:
     from ._models import Request, Response  # pragma: no cover
+    from ._origins import Origin, OriginDecision  # pragma: no cover
 
 __all__ = [
     "CloseError",
@@ -50,6 +52,7 @@ __all__ = [
     "InvalidURL",
     "LocalProtocolError",
     "NetworkError",
+    "OriginNotAllowed",
     "PoolTimeout",
     "ProtocolError",
     "ProxyError",
@@ -250,6 +253,33 @@ class TooManyRedirects(RequestError):
     """
     Too many redirects.
     """
+
+
+class OriginNotAllowed(RequestError):
+    """
+    A caller-provided origin restriction rejected the address the client
+    resolved.
+
+    This is raised before the rejected request is handed to the transport, so
+    no connection is attempted for the rejected origin.
+
+    The `decisions` attribute contains the `httpx.OriginDecision` records taken
+    while handling the request, and `origin` is the rejected origin. Neither
+    the message nor the records include a path, a query string, a fragment, or
+    any request credentials.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        request: Request | None = None,
+        origin: Origin | None = None,
+        decisions: tuple[OriginDecision, ...] = (),
+    ) -> None:
+        super().__init__(message, request=request)
+        self.origin = origin
+        self.decisions = decisions
 
 
 # Client errors

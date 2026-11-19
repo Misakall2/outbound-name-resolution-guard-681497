@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Added
 
 * Expose `FunctionAuth` from the public API. (#3699)
+* Add per-request origin restrictions for redirect handling. Pass an
+  `httpx.OriginRestriction` via the `"origin_restriction"` request extension to
+  bound the origins a request and its redirect may reach; a disallowed
+  destination raises `httpx.OriginNotAllowed` before the next request is
+  dispatched. Diagnostics are exposed as `httpx.OriginDecision` records on the
+  response's `"origin_decisions"` extension and contain only scheme, host and
+  port.
 
 ## 0.28.1 (6th December, 2024)
 
